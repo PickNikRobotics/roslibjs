@@ -94,7 +94,9 @@ export default class Service extends EventEmitter {
    */
   advertise(callback) {
     if (this.isAdvertised) {
-      throw new Error('Cannot advertise the same Service twice!');
+      // If already advertised, unadvertise first then re-advertise with new callback
+      // This prevents throwing an error and allows smooth re-advertising
+      this.unadvertise();
     }
 
     // Store the new callback for removal during un-advertisement
@@ -127,17 +129,26 @@ export default class Service extends EventEmitter {
 
   unadvertise() {
     if (!this.isAdvertised) {
-      throw new Error(`Tried to un-advertise service ${this.name}, but it was not advertised!`);
+      // Silently return if not advertised instead of throwing an error
+      // This prevents race conditions where multiple unadvertise calls happen
+      return;
     }
+    
+    // Remove the registered callback first to stop processing new requests
+    if (this._serviceCallback) {
+      this.ros.off(this.name, this._serviceCallback);
+      this._serviceCallback = null;
+    }
+    
+    // Mark as not advertised before sending the message
+    // This ensures that any new advertise calls won't be blocked
+    this.isAdvertised = false;
+    
+    // Send the unadvertise message to the server
     this.ros.callOnConnection({
       op: 'unadvertise_service',
       service: this.name
     });
-    // Remove the registered callback
-    if (this._serviceCallback) {
-      this.ros.off(this.name, this._serviceCallback);
-    }
-    this.isAdvertised = false;
   }
 
   /**
@@ -146,8 +157,11 @@ export default class Service extends EventEmitter {
    */
   advertiseAsync(callback) {
     if (this.isAdvertised) {
-      throw new Error('Cannot advertise the same Service twice!');
+      // If already advertised, unadvertise first then re-advertise with new callback
+      // This prevents throwing an error and allows smooth re-advertising
+      this.unadvertise();
     }
+    
     this._serviceCallback = async (rosbridgeRequest) => {
       /** @type {{op: string, service: string, values?: TResponse, result: boolean, id?: string}} */
       let rosbridgeResponse = {
